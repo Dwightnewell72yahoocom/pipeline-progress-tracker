@@ -203,9 +203,7 @@ input.pc-input:focus { outline:none; border-color:var(--accent); background:var(
 .stat-val.blue { color:#60a5fa; }
 .stat-val.purple { color:#a78bfa; }
 .stat-val.orange { color:var(--accent); }
-.tracker-save-row { padding:0 0 4px; }
-.tracker-save-btn { width:100%; font-family:var(--font); font-size:14px; font-weight:600; padding:14px; border-radius:10px; border:none; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; touch-action:manipulation; transition:opacity 0.15s,transform 0.1s; background:linear-gradient(135deg,#1e3a8a,#1d4ed8); color:#bfdbfe; border:1px solid rgba(191,219,254,0.2); }
-.tracker-save-btn:active { transform:scale(0.97); opacity:0.85; }
+
 .wipe-row { display:flex; gap:10px; margin-top:4px; }
 .wipe-btn { flex:1; font-family:var(--font); font-size:12px; font-weight:600; padding:11px; border-radius:10px; cursor:pointer; touch-action:manipulation; transition:opacity 0.15s; border:1px solid rgba(239,68,68,0.3); background:rgba(239,68,68,0.07); color:#f87171; }
 .restore-btn { flex:1; font-family:var(--font); font-size:12px; font-weight:600; padding:11px; border-radius:10px; cursor:pointer; touch-action:manipulation; transition:opacity 0.15s; border:1px solid rgba(34,197,94,0.3); background:rgba(34,197,94,0.07); color:#4ade80; }
@@ -288,13 +286,17 @@ input.pc-input:focus { outline:none; border-color:var(--accent); background:var(
           <tbody id="tr-tbody"></tbody>
         </table>
       </div>
-      <div class="tracker-save-row">
-        <button class="tracker-save-btn" onclick="saveTrackerDay()">💾 Save day</button>
-      </div>
+
       <div class="stat-cards" id="tr-stats"></div>
-      <div class="wipe-row">
-        <button class="wipe-btn" onclick="wipeTrackerAvg()">🗑 Wipe avg history</button>
-        <button class="restore-btn" onclick="restoreTrackerAvg()">↺ Restore avg</button>
+      <div style="text-align:center;margin-top:4px;">
+        <button onclick="toggleAdvanced()" id="advancedToggleBtn" style="font-family:var(--mono);font-size:10px;padding:4px 14px;border-radius:99px;border:1px solid rgba(255,255,255,0.08);background:transparent;color:var(--muted);cursor:pointer;touch-action:manipulation;">⚙ Advanced</button>
+      </div>
+      <div id="advancedPanel" style="display:none;margin-top:8px;">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);text-align:center;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.1em;">⚠ Danger zone — use with caution</div>
+        <div class="wipe-row">
+          <button class="wipe-btn" onclick="wipeTrackerAvg()">🗑 Wipe avg history</button>
+          <button class="restore-btn" onclick="restoreTrackerAvg()">↺ Restore avg</button>
+        </div>
       </div>
     </div>
   </div>
@@ -333,7 +335,7 @@ input.pc-input:focus { outline:none; border-color:var(--accent); background:var(
 //  CONSTANTS & STATE
 // ══════════════════════════════════════════════
 const TOTAL_PC = 750;
-const DEFAULT_TASK_NAMES = ['Trenching','Pipelay','Welded','Tested','Sleeved','Diapered','Slurry'];
+const DEFAULT_TASK_NAMES = ['Trenching','Pipelay','Welded & Tested','Sleeved','Diapered','Slurry','Backfill'];
 function blankTask(n){ return {name:n, stStart:'', stEnd:'', wjStart:'', wjEnd:'', notes:'', photo:''}; }
 let TASKS = DEFAULT_TASK_NAMES.map(blankTask);
 let generalNotes = '';
@@ -709,6 +711,7 @@ function closePdfModal(){ document.getElementById('pdfModal').classList.remove('
 // ══════════════════════════════════════════════
 function copyToClipboard(){
   closePdfModal(); closeReport(); syncLiveInputs();
+  saveTrackerDay(); // auto-save PC avg on clipboard copy
   const hasNotes=TASKS.some(t=>t.notes&&t.notes.trim());
   const nh=hasNotes?'<td style="background:#1a3a5c;color:#f59e0b;font-weight:bold;padding:8px 10px;border:1px solid #999;text-align:center;font-size:12pt;" rowspan="2">Notes</td>':'';
   const rows=TASKS.map((t,i)=>{
@@ -750,6 +753,7 @@ function copyToClipboard(){
 // ══════════════════════════════════════════════
 function generatePDF(mode){
   closePdfModal(); closeReport(); syncLiveInputs();
+  saveTrackerDay(); // auto-save PC avg on report generation
   const hasNotes=TASKS.some(t=>t.notes&&t.notes.trim());
   const photoTasks=TASKS.filter(t=>t.photo);
   const doc=new window.jspdf.jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
@@ -918,8 +922,14 @@ function renderTrackerStats(){
   }
 }
 
+// Auto-triggered PC avg save — called on report generation and midnight
+// Tracks whether we've already saved today to avoid duplicate avg entries
+let _lastAvgSaveDate = '';
 function saveTrackerDay(){
   try {
+    const todayISO = fmtISO(localMid(new Date()));
+    if(_lastAvgSaveDate === todayISO) return; // already saved today
+    _lastAvgSaveDate = todayISO;
     TASKS.forEach(t=>{
       const pcStart=t.wjStart||t.pcStart||'', pcEnd=t.wjEnd||t.pcEnd||'';
       const s=parseFloat(pcStart), e=parseFloat(pcEnd);
@@ -929,13 +939,31 @@ function saveTrackerDay(){
         trackerAvgHistory[t.name].push(count);
       }
     });
-    TASKS.forEach(t=>{ const end=t.wjEnd||t.pcEnd||''; t.wjStart=end; t.pcStart=end; t.wjEnd=''; t.pcEnd=''; });
+    saveState();
+  } catch(err){ console.warn('saveTrackerDay error:', err); }
+}
+
+// Midnight carry-forward — shifts wjEnd→wjStart if saved on a previous day
+function midnightCarryForward(){
+  const todayISO = fmtISO(localMid(new Date()));
+  if(_lastAvgSaveDate && _lastAvgSaveDate !== todayISO){
+    TASKS.forEach(t=>{
+      const end=t.wjEnd||t.pcEnd||'';
+      t.wjStart=end; t.pcStart=end;
+      t.wjEnd=''; t.pcEnd='';
+    });
+    _lastAvgSaveDate = '';
     saveState();
     renderTracker();
-    const btn=document.querySelector('.tracker-save-btn'), orig=btn.textContent;
-    btn.textContent='✓ Saved!'; btn.style.background='linear-gradient(135deg,#065f46,#047857)'; btn.style.color='#6ee7b7';
-    setTimeout(()=>{ btn.textContent=orig; btn.style.background=''; btn.style.color=''; },1500);
-  } catch(err){ alert('Save error: '+err.message); }
+  }
+}
+
+function toggleAdvanced(){
+  const panel = document.getElementById('advancedPanel');
+  const btn = document.getElementById('advancedToggleBtn');
+  const isOpen = panel.style.display !== 'none';
+  panel.style.display = isOpen ? 'none' : 'block';
+  btn.textContent = isOpen ? '⚙ Advanced' : '▲ Hide';
 }
 
 function wipeTrackerAvg(){
@@ -1018,7 +1046,10 @@ function applyState(s){
     generalNotes=''; saveState();
   }
 }
-document.addEventListener('visibilitychange',function(){ if(document.visibilityState==='hidden'&&appReady) saveState(); });
+document.addEventListener('visibilitychange',function(){
+  if(document.visibilityState==='hidden'&&appReady) saveState();
+  if(document.visibilityState==='visible'&&appReady) midnightCarryForward();
+});
 window.addEventListener('pagehide',function(){ if(appReady) saveState(); });
 
 // ══════════════════════════════════════════════
@@ -1029,6 +1060,18 @@ function toggleSun(){
   document.getElementById('sunBtn').innerHTML=isSun?'☾ Night':'☀ Sunlight';
   try{ localStorage.setItem('parsons_sun',isSun?'1':'0'); } catch(e){}
 }
+
+// ══════════════════════════════════════════════
+//  MIDNIGHT INTERVAL
+// ══════════════════════════════════════════════
+let _midnightCheckDate = fmtISO(localMid(new Date()));
+setInterval(function(){
+  const todayISO = fmtISO(localMid(new Date()));
+  if(todayISO !== _midnightCheckDate){
+    _midnightCheckDate = todayISO;
+    if(appReady) midnightCarryForward();
+  }
+}, 60000); // check every minute
 
 // ══════════════════════════════════════════════
 //  INIT
