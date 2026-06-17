@@ -23,7 +23,28 @@
   --font: 'Sora', sans-serif;
   --mono: 'DM Mono', monospace;
 }
+body.day-mode {
+  --navy: #f0f4f8;
+  --navy2: #dce6f0;
+  --steel: #b0c8e0;
+  --accent: #d97706;
+  --muted: #4a6a88;
+  --text: #0a1628;
+  --text2: #1a3a5c;
+  --green: #16a34a;
+  --card-bg: #e4edf6;
+  --border: rgba(0,0,0,0.12);
+}
+body.day-mode body::before { display: none; }
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+.day-night-btn {
+  position: fixed; top: 12px; right: 12px; z-index: 9999;
+  background: var(--accent); color: #0a1628;
+  border: none; border-radius: 20px;
+  padding: 7px 14px; font-size: 13px; font-weight: 700;
+  cursor: pointer; font-family: var(--font);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
 body {
   font-family: var(--font);
   background: var(--navy);
@@ -281,6 +302,7 @@ input.pc-input:focus { outline: none; border-color: var(--accent); background: v
 </style>
 </head>
 <body>
+<button class="day-night-btn" onclick="toggleDayNight()" id="dayNightBtn">☀️ Day</button>
 <div class="app">
 
   <div class="header">
@@ -585,8 +607,19 @@ function renderCards(tasks, readonly){
 
     wrap.querySelectorAll('input.ci').forEach(inp=>{
       ['input','change'].forEach(ev=>inp.addEventListener(ev, e=>{
-        TASKS[+e.target.dataset.i][e.target.dataset.f] = e.target.value;
+        const idx = +e.target.dataset.i;
+        const field = e.target.dataset.f;
+        TASKS[idx][field] = e.target.value;
         saveToStorage();
+        // Sync wjStart/wjEnd → pcStart/pcEnd live on PC tab
+        if(field === 'wjStart' || field === 'wjEnd'){
+          if(field === 'wjStart') TASKS[idx].pcStart = e.target.value;
+          if(field === 'wjEnd')   TASKS[idx].pcEnd   = e.target.value;
+          if(document.getElementById('pane-tracker') &&
+             document.getElementById('pane-tracker').classList.contains('active')){
+            renderTracker();
+          }
+        }
       }));
     });
     wrap.querySelectorAll('input.task-name-input').forEach(inp=>{
@@ -836,9 +869,14 @@ function renderTracker(){
   document.getElementById('tr-date-badge').innerHTML = dateLabel.replace(' ', '<br>');
 
   TASKS.forEach((t, i)=>{
-    const start = parseFloat(t.pcStart) || 0;
-    const end   = parseFloat(t.pcEnd)   || 0;
-    const today = (t.pcStart !== '' && t.pcEnd !== '') ? Math.max(0, end - start) : null;
+    // PC Start/End derived from Weld/Joint Start/End (same numbers)
+    const pcStart = t.wjStart !== '' ? t.wjStart : t.pcStart;
+    const pcEnd   = t.wjEnd   !== '' ? t.wjEnd   : t.pcEnd;
+    t.pcStart = pcStart;
+    t.pcEnd   = pcEnd;
+    const start = parseFloat(pcStart) || 0;
+    const end   = parseFloat(pcEnd)   || 0;
+    const today = (pcStart !== '' && pcEnd !== '') ? Math.max(0, end - start) : null;
 
     // Build avg from history
     const hist = trackerAvgHistory[t.name] || [];
@@ -852,8 +890,8 @@ function renderTracker(){
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${t.name}</td>
-      <td><input class="pc-input start-inp" data-i="${i}" data-f="pcStart" value="${t.pcStart}" placeholder="—" inputmode="numeric" onfocus="this.select()"></td>
-      <td><input class="pc-input" data-i="${i}" data-f="pcEnd" value="${t.pcEnd}" placeholder="—" inputmode="numeric" onfocus="this.select()"></td>
+      <td><input class="pc-input start-inp" data-i="${i}" data-f="pcStart" value="${pcStart}" placeholder="—" inputmode="numeric" onfocus="this.select()"></td>
+      <td><input class="pc-input" data-i="${i}" data-f="pcEnd" value="${pcEnd}" placeholder="—" inputmode="numeric" onfocus="this.select()"></td>
       <td>${today !== null ? today : '—'}</td>
       <td>${avg !== null ? avg : '—'}</td>
       <td class="${pctClass}">${pctVal !== null ? pctVal+'%' : '—'}</td>
@@ -971,30 +1009,34 @@ function renderTrackerStats(){
 }
 
 function saveTrackerDay(){
-  // Accumulate today's PC counts into avg history
-  TASKS.forEach(t=>{
-    const start = parseFloat(t.pcStart);
-    const end   = parseFloat(t.pcEnd);
-    if(!isNaN(start) && !isNaN(end) && t.pcEnd !== ''){
-      const count = Math.max(0, end - start);
-      if(!trackerAvgHistory[t.name]) trackerAvgHistory[t.name] = [];
-      trackerAvgHistory[t.name].push(count);
-    }
-  });
-  // Carry pcEnd → pcStart, clear pcEnd
-  TASKS.forEach(t=>{
-    t.pcStart = t.pcEnd;
-    t.pcEnd = '';
-  });
-  saveToStorage();
-  renderTracker();
-  // Flash confirmation
-  const btn = document.querySelector('.tracker-save-btn');
-  const orig = btn.textContent;
-  btn.textContent = '✓ Saved!';
-  btn.style.background = 'linear-gradient(135deg,#065f46,#047857)';
-  btn.style.color = '#6ee7b7';
-  setTimeout(()=>{ btn.textContent = orig; btn.style.background=''; btn.style.color=''; }, 1500);
+  try {
+    // Accumulate today's PC counts into avg history
+    TASKS.forEach(t=>{
+      const start = parseFloat(t.pcStart);
+      const end   = parseFloat(t.pcEnd);
+      if(!isNaN(start) && !isNaN(end) && t.pcEnd !== ''){
+        const count = Math.max(0, end - start);
+        if(!trackerAvgHistory[t.name]) trackerAvgHistory[t.name] = [];
+        trackerAvgHistory[t.name].push(count);
+      }
+    });
+    // Carry pcEnd → pcStart, clear pcEnd
+    TASKS.forEach(t=>{
+      t.pcStart = t.pcEnd;
+      t.pcEnd = '';
+    });
+    saveToStorage();
+    renderTracker();
+    // Flash confirmation
+    const btn = document.querySelector('.tracker-save-btn');
+    const orig = btn.textContent;
+    btn.textContent = '✓ Saved!';
+    btn.style.background = 'linear-gradient(135deg,#065f46,#047857)';
+    btn.style.color = '#6ee7b7';
+    setTimeout(()=>{ btn.textContent = orig; btn.style.background=''; btn.style.color=''; }, 1500);
+  } catch(err) {
+    alert('Save error: ' + err.message);
+  }
 }
 
 function wipeTrackerAvg(){
@@ -1097,5 +1139,19 @@ initDates();
 const restored = loadFromStorage();
 if(restored) updateDateDisplay();
 renderCards(TASKS, false);
+
+function toggleDayNight(){
+  const isDay = document.body.classList.toggle('day-mode');
+  document.getElementById('dayNightBtn').textContent = isDay ? '🌙 Night' : '☀️ Day';
+  try { localStorage.setItem('parsons_theme', isDay ? 'day' : 'night'); } catch(e){}
+}
+
+// Restore saved theme on load
+try {
+  if(localStorage.getItem('parsons_theme') === 'day'){
+    document.body.classList.add('day-mode');
+    document.getElementById('dayNightBtn').textContent = '🌙 Night';
+  }
+} catch(e){}
 </script>
 </body></html>
