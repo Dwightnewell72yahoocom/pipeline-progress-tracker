@@ -23,7 +23,28 @@
   --font: 'Sora', sans-serif;
   --mono: 'DM Mono', monospace;
 }
+body.day-mode {
+  --navy: #f0f4f8;
+  --navy2: #dce6f0;
+  --steel: #b0c8e0;
+  --accent: #d97706;
+  --muted: #4a6a88;
+  --text: #0a1628;
+  --text2: #1a3a5c;
+  --green: #16a34a;
+  --card-bg: #e4edf6;
+  --border: rgba(0,0,0,0.12);
+}
+body.day-mode body::before { display: none; }
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+.day-night-btn {
+  position: fixed; top: 12px; right: 12px; z-index: 9999;
+  background: var(--accent); color: #0a1628;
+  border: none; border-radius: 20px;
+  padding: 7px 14px; font-size: 13px; font-weight: 700;
+  cursor: pointer; font-family: var(--font);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
 body {
   font-family: var(--font);
   background: var(--navy);
@@ -281,6 +302,7 @@ input.pc-input:focus { outline: none; border-color: var(--accent); background: v
 </style>
 </head>
 <body>
+<button class="day-night-btn" onclick="toggleDayNight()" id="dayNightBtn">☀️ Day</button>
 <div class="app">
 
   <div class="header">
@@ -1093,29 +1115,4 @@ function saveDayAndAdvance(){
   TASKS.forEach((t,i)=>{
     if(t.stEnd||t.wjEnd) moved.push(i);
     t.stStart = t.stEnd;  t.stEnd  = '';
-    t.wjStart = t.wjEnd;  t.wjEnd  = '';
-    t.pcStart = t.pcEnd;  t.pcEnd  = '';
-  });
-  prevDate = localMid(currDate);
-  currDate = addDays(currDate, 1);
-  viewIndex = -1;
-  saveToStorage();
-  updateDateDisplay();
-  renderCards(TASKS, false);
-  if(moved.length){
-    document.querySelectorAll('.task-card').forEach((el,i)=>{
-      if(moved.includes(i)) el.classList.add('flash');
-      setTimeout(()=>el.classList.remove('flash'), 900);
-    });
-  }
-}
-
-// ══════════════════════════════════════════════
-//  INIT
-// ══════════════════════════════════════════════
-initDates();
-const restored = loadFromStorage();
-if(restored) updateDateDisplay();
-renderCards(TASKS, false);
-</script>
-</body></html>
+    t.wjStart = t.wjEnd;  t.wjEn
