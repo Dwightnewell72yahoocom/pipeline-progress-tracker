@@ -492,35 +492,7 @@ function stepDate(delta){
   }
 }
 
-// ══════════════════════════════════════════════
-//  SAVE & ADVANCE (Progress tab)
-// ══════════════════════════════════════════════
-function saveDayAndAdvance(){
-  dayLog.push({
-    prevDate: fmtNice(prevDate),
-    date:     fmtNice(currDate),
-    tasks:    TASKS.map(t=>({...t}))
-  });
-  const moved = [];
-  TASKS.forEach((t,i)=>{
-    if(t.stEnd||t.wjEnd) moved.push(i);
-    t.stStart = t.stEnd;  t.stEnd  = '';
-    t.wjStart = t.wjEnd;  t.wjEnd  = '';
-    // carry PC end → start
-    t.pcStart = t.pcEnd;  t.pcEnd  = '';
-  });
-  prevDate = localMid(currDate);
-  currDate = addDays(currDate, 1);
-  viewIndex = -1;
-  updateDateDisplay();
-  renderCards(TASKS, false);
-  if(moved.length){
-    document.querySelectorAll('.task-card').forEach((el,i)=>{
-      if(moved.includes(i)) el.classList.add('flash');
-      setTimeout(()=>el.classList.remove('flash'), 900);
-    });
-  }
-}
+// saveDayAndAdvance defined below with localStorage support
 
 // ══════════════════════════════════════════════
 //  RENDER PROGRESS CARDS
@@ -614,16 +586,19 @@ function renderCards(tasks, readonly){
     wrap.querySelectorAll('input.ci').forEach(inp=>{
       ['input','change'].forEach(ev=>inp.addEventListener(ev, e=>{
         TASKS[+e.target.dataset.i][e.target.dataset.f] = e.target.value;
+        saveToStorage();
       }));
     });
     wrap.querySelectorAll('input.task-name-input').forEach(inp=>{
       ['input','change'].forEach(ev=>inp.addEventListener(ev, e=>{
         TASKS[+e.target.dataset.i].name = e.target.value||'Unnamed';
+        saveToStorage();
       }));
     });
     wrap.querySelectorAll('textarea.notes-input').forEach(ta=>{
       ['input','change'].forEach(ev=>ta.addEventListener(ev, e=>{
         TASKS[+e.target.dataset.i].notes = e.target.value;
+        saveToStorage();
       }));
     });
   }
@@ -644,6 +619,7 @@ function addTask(beforeIndex){
   } else {
     TASKS.splice(beforeIndex, 0, newTask);
   }
+  saveToStorage();
   renderCards(TASKS, false);
   setTimeout(()=>{
     const idx = beforeIndex === -1 ? TASKS.length-1 : beforeIndex;
@@ -656,6 +632,7 @@ function deleteTask(i){
   if(TASKS.length <= 1){ alert('Must have at least one task.'); return; }
   if(!confirm('Remove "'+TASKS[i].name+'"?')) return;
   TASKS.splice(i, 1);
+  saveToStorage();
   renderCards(TASKS, false);
 }
 
@@ -675,6 +652,8 @@ function downloadDoc(){
   const hasNotes = activeTasks.some(t=>t.notes && t.notes.trim());
 
   const tdStyle = 'padding:8px 10px;border:1px solid #ccc;';
+
+  // ── Progress table rows ──
   const rows = activeTasks.map((t,i)=>{
     const bg = i%2===0 ? '#ffffff' : '#f0f6fc';
     return `<tr style="background:${bg}">
@@ -692,22 +671,111 @@ function downloadDoc(){
     <h3 style="color:#1a3a5c;margin-top:28px;margin-bottom:8px;font-family:Arial;">General Notes</h3>
     <div style="border:1px solid #ccc;border-radius:4px;padding:14px;font-size:13px;line-height:1.6;white-space:pre-wrap;color:#333;">${generalNotes}</div>` : '';
 
+  // ── PC Tracker table rows ──
+  const pcRows = activeTasks.map((t,i)=>{
+    const start = parseFloat(t.pcStart);
+    const end   = parseFloat(t.pcEnd);
+    const hasStart = !isNaN(start) && t.pcStart !== '';
+    const hasEnd   = !isNaN(end)   && t.pcEnd   !== '';
+    const todayCount = (hasStart && hasEnd) ? Math.max(0, end - start) : null;
+    const hist = trackerAvgHistory[t.name] || [];
+    const avg  = hist.length > 0 ? Math.round(hist.reduce((a,b)=>a+b,0)/hist.length) : null;
+    const pct  = hasEnd ? Math.round((end / TOTAL_PC) * 100) : null;
+    const pctColor = pct === null ? '#999' : pct >= 66 ? '#16a34a' : pct >= 33 ? '#d97706' : '#64748b';
+    const bg = i%2===0 ? '#ffffff' : '#f0f6fc';
+    return `<tr style="background:${bg}">
+      <td style="${tdStyle}font-weight:600;">${t.name}</td>
+      <td style="${tdStyle}text-align:center;font-family:Courier New;">${hasStart ? Math.round(start) : '—'}</td>
+      <td style="${tdStyle}text-align:center;font-family:Courier New;">${hasEnd   ? Math.round(end)   : '—'}</td>
+      <td style="${tdStyle}text-align:center;font-family:Courier New;">${todayCount !== null ? todayCount : '—'}</td>
+      <td style="${tdStyle}text-align:center;font-family:Courier New;">${avg !== null ? avg : '—'}</td>
+      <td style="${tdStyle}text-align:center;font-weight:700;color:${pctColor};">${pct !== null ? pct+'%' : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  // ── Stats: days remaining + open trench ──
+  let statsHtml = '';
+  const statItems = [];
+
+  // Days remaining
+  activeTasks.forEach(t=>{
+    const end  = parseFloat(t.pcEnd);
+    const hist = trackerAvgHistory[t.name] || [];
+    const avg  = hist.length > 0 ? Math.round(hist.reduce((a,b)=>a+b,0)/hist.length) : null;
+    if(avg && avg > 0 && !isNaN(end) && end > 0){
+      const days = Math.ceil(Math.max(0, TOTAL_PC - end) / avg);
+      statItems.push(`<td style="padding:10px 14px;border:1px solid #ccc;font-weight:600;">${t.name}</td>
+        <td style="padding:10px 14px;border:1px solid #ccc;color:#555;font-size:12px;">Based on ${t.name} daily avg</td>
+        <td style="padding:10px 14px;border:1px solid #ccc;font-weight:700;color:#1d4ed8;text-align:center;">${days} days</td>`);
+    }
+  });
+
+  // Open trench
+  let trenchTask = null, backTask = null;
+  activeTasks.forEach(t=>{
+    const n = t.name.toLowerCase();
+    if(n.includes('trench')) trenchTask = t;
+    if(n.includes('back'))   backTask   = t;
+  });
+  if(trenchTask && backTask){
+    const tEnd = parseFloat(trenchTask.pcEnd)||0;
+    const bEnd = parseFloat(backTask.pcEnd)||0;
+    const gap  = Math.max(0, tEnd - bEnd);
+    const ft   = gap * 40;
+    if(tEnd > 0 || bEnd > 0){
+      statItems.push(`<td style="padding:10px 14px;border:1px solid #ccc;font-weight:600;">Open Trench</td>
+        <td style="padding:10px 14px;border:1px solid #ccc;color:#555;font-size:12px;">Trench PC ${Math.round(tEnd)} — Back fill PC ${Math.round(bEnd)}</td>
+        <td style="padding:10px 14px;border:1px solid #ccc;font-weight:700;color:#d97706;text-align:center;">${gap} PC &nbsp;/&nbsp; ${ft.toLocaleString()} ft</td>`);
+    }
+  }
+
+  if(statItems.length){
+    statsHtml = `
+    <h3 style="color:#1a3a5c;margin-top:28px;margin-bottom:10px;font-family:Arial;font-size:14px;text-transform:uppercase;letter-spacing:0.05em;">Summary</h3>
+    <table style="border-collapse:collapse;width:100%;">
+      ${statItems.map(s=>`<tr>${s}</tr>`).join('')}
+    </table>`;
+  }
+
+  // ── Overall progress bar (Lay/Pipelay task) ──
+  let barHtml = '';
+  const barTask = activeTasks.find(t=>t.name.toLowerCase().includes('lay')) ||
+                  activeTasks.find(t=>parseFloat(t.pcEnd)>0);
+  if(barTask && parseFloat(barTask.pcEnd) > 0){
+    const pct = Math.min(100, Math.round((parseFloat(barTask.pcEnd)/TOTAL_PC)*100));
+    const barW = pct + '%';
+    barHtml = `
+    <div style="margin-top:24px;">
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:#64748b;font-family:Courier New;margin-bottom:6px;">
+        <span>Overall progress — ${barTask.name}</span><span>${pct}% of ${TOTAL_PC} PC</span>
+      </div>
+      <div style="background:#e2e8f0;border-radius:99px;height:10px;overflow:hidden;">
+        <div style="background:linear-gradient(90deg,#16a34a,#4ade80);height:100%;width:${barW};border-radius:99px;"></div>
+      </div>
+    </div>`;
+  }
+
+  // ── Assemble full document ──
   const html = `<!DOCTYPE html>
 <html><head><meta charset="UTF-8">
 <style>
-  body{font-family:Arial,sans-serif;margin:40px;}
+  body{font-family:Arial,sans-serif;margin:40px;color:#1e293b;}
   h1{color:#1a3a5c;font-size:24px;margin-bottom:4px;}
   h2{color:#333;font-size:18px;font-weight:normal;margin-bottom:4px;}
+  h3{color:#1a3a5c;font-size:14px;text-transform:uppercase;letter-spacing:0.05em;}
   .dates{color:#555;font-size:13px;margin-bottom:24px;}
   table{border-collapse:collapse;width:100%;}
   .hdr td{background:#1a3a5c;color:#f59e0b;font-weight:bold;padding:8px 10px;border:1px solid #ccc;text-align:center;}
   .sub td{background:#d6e4f0;color:#1a3a5c;font-weight:bold;padding:6px 10px;border:1px solid #ccc;text-align:center;}
-  .footer{color:#999;font-size:11px;margin-top:16px;}
+  .divider{border:none;border-top:2px solid #1a3a5c;margin:32px 0;}
+  .footer{color:#999;font-size:11px;margin-top:24px;border-top:1px solid #e2e8f0;padding-top:10px;}
 </style>
 </head><body>
+
 <h1>PARSONS</h1>
 <h2>Pipeline Progress Report</h2>
 <div class="dates">Previous date: ${prevStr} &nbsp;|&nbsp; Current date: ${currStr}</div>
+
 <table>
   <tr class="hdr">
     <td rowspan="2" style="vertical-align:middle;text-align:left;">Task</td>
@@ -720,7 +788,28 @@ function downloadDoc(){
   </tr>
   ${rows}
 </table>
+
 ${genNotesHtml}
+
+<hr class="divider">
+
+<h3 style="margin-bottom:10px;">PC Tracker &nbsp;<span style="font-size:11px;font-weight:normal;color:#64748b;text-transform:none;letter-spacing:0;">${TOTAL_PC} PC Total</span></h3>
+
+<table>
+  <tr class="hdr">
+    <td style="text-align:left;">Task</td>
+    <td>PC Start</td>
+    <td>PC End</td>
+    <td>Today</td>
+    <td>Avg</td>
+    <td>%</td>
+  </tr>
+  ${pcRows}
+</table>
+
+${barHtml}
+${statsHtml}
+
 <div class="footer">Generated: ${new Date().toLocaleString()}</div>
 </body></html>`;
 
@@ -763,8 +852,8 @@ function renderTracker(){
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${t.name}</td>
-      <td><input class="pc-input start-inp" data-i="${i}" data-f="pcStart" value="${t.pcStart}" placeholder="—"></td>
-      <td><input class="pc-input" data-i="${i}" data-f="pcEnd" value="${t.pcEnd}" placeholder="—"></td>
+      <td><input class="pc-input start-inp" data-i="${i}" data-f="pcStart" value="${t.pcStart}" placeholder="—" inputmode="numeric" onfocus="this.select()"></td>
+      <td><input class="pc-input" data-i="${i}" data-f="pcEnd" value="${t.pcEnd}" placeholder="—" inputmode="numeric" onfocus="this.select()"></td>
       <td>${today !== null ? today : '—'}</td>
       <td>${avg !== null ? avg : '—'}</td>
       <td class="${pctClass}">${pctVal !== null ? pctVal+'%' : '—'}</td>
@@ -772,13 +861,31 @@ function renderTracker(){
     tbody.appendChild(tr);
   });
 
-  // Wire inputs
+  // Wire inputs — update derived cells only, never re-render whole table during typing
   tbody.querySelectorAll('input.pc-input').forEach(inp=>{
     ['input','change'].forEach(ev=>inp.addEventListener(ev, e=>{
-      TASKS[+e.target.dataset.i][e.target.dataset.f] = e.target.value;
+      const i = +e.target.dataset.i;
+      TASKS[i][e.target.dataset.f] = e.target.value;
+
+      // Update only the derived cells (Today, Avg, %) in this row
+      const row = e.target.closest('tr');
+      const t = TASKS[i];
+      const start = parseFloat(t.pcStart) || 0;
+      const end   = parseFloat(t.pcEnd)   || 0;
+      const today = (t.pcStart !== '' && t.pcEnd !== '') ? Math.max(0, end - start) : null;
+      const hist  = trackerAvgHistory[t.name] || [];
+      const avg   = hist.length > 0 ? Math.round(hist.reduce((a,b)=>a+b,0) / hist.length) : null;
+      const pctVal = end > 0 ? Math.round((end / TOTAL_PC) * 100) : null;
+      let pctClass = 'pct-muted';
+      if(pctVal !== null){ pctClass = pctVal >= 66 ? 'pct-green' : pctVal >= 33 ? 'pct-yellow' : 'pct-muted'; }
+
+      const cells = row.querySelectorAll('td');
+      cells[3].textContent = today !== null ? today : '—';
+      cells[4].textContent = avg   !== null ? avg   : '—';
+      cells[5].className   = pctClass;
+      cells[5].textContent = pctVal !== null ? pctVal+'%' : '—';
+
       renderTrackerStats();
-      // live-update today/pct cells
-      renderTracker();
     }));
   });
 
@@ -879,6 +986,7 @@ function saveTrackerDay(){
     t.pcStart = t.pcEnd;
     t.pcEnd = '';
   });
+  saveToStorage();
   renderTracker();
   // Flash confirmation
   const btn = document.querySelector('.tracker-save-btn');
@@ -893,19 +1001,101 @@ function wipeTrackerAvg(){
   if(!confirm('Wipe all daily average history for every task?')) return;
   trackerAvgBackup = JSON.parse(JSON.stringify(trackerAvgHistory));
   trackerAvgHistory = {};
+  saveToStorage();
   renderTracker();
 }
 
 function restoreTrackerAvg(){
   if(!trackerAvgBackup){ alert('No backup available.'); return; }
   trackerAvgHistory = JSON.parse(JSON.stringify(trackerAvgBackup));
+  saveToStorage();
   renderTracker();
+}
+
+// ══════════════════════════════════════════════
+//  LOCAL STORAGE — auto-save & auto-load
+// ══════════════════════════════════════════════
+const STORAGE_KEY = 'parsons_pipeline_v1';
+
+function saveToStorage(){
+  try {
+    const payload = {
+      tasks: TASKS,
+      avgHistory: trackerAvgHistory,
+      avgBackup: trackerAvgBackup,
+      currDate: fmtISO(currDate),
+      prevDate: fmtISO(prevDate)
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  } catch(e){ /* storage not available — silent fail */ }
+}
+
+function loadFromStorage(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return false;
+    const payload = JSON.parse(raw);
+    if(payload.tasks && Array.isArray(payload.tasks)){
+      // Merge saved tasks — preserve structure, fill in pcStart for carry-forward
+      TASKS = payload.tasks.map(t=>({
+        name:    t.name    || 'Task',
+        stStart: t.stStart || '',
+        stEnd:   t.stEnd   || '',
+        wjStart: t.wjStart || '',
+        wjEnd:   t.wjEnd   || '',
+        notes:   t.notes   || '',
+        pcStart: t.pcStart || '',
+        pcEnd:   t.pcEnd   || ''
+      }));
+    }
+    if(payload.avgHistory) trackerAvgHistory = payload.avgHistory;
+    if(payload.avgBackup)  trackerAvgBackup  = payload.avgBackup;
+    if(payload.currDate){
+      const parts = payload.currDate.split('-');
+      currDate = new Date(+parts[0], +parts[1]-1, +parts[2]);
+    }
+    if(payload.prevDate){
+      const parts = payload.prevDate.split('-');
+      prevDate = new Date(+parts[0], +parts[1]-1, +parts[2]);
+    }
+    return true;
+  } catch(e){ return false; }
+}
+
+// Auto-save whenever task data changes
+function saveDayAndAdvance(){
+  dayLog.push({
+    prevDate: fmtNice(prevDate),
+    date:     fmtNice(currDate),
+    tasks:    TASKS.map(t=>({...t}))
+  });
+  const moved = [];
+  TASKS.forEach((t,i)=>{
+    if(t.stEnd||t.wjEnd) moved.push(i);
+    t.stStart = t.stEnd;  t.stEnd  = '';
+    t.wjStart = t.wjEnd;  t.wjEnd  = '';
+    t.pcStart = t.pcEnd;  t.pcEnd  = '';
+  });
+  prevDate = localMid(currDate);
+  currDate = addDays(currDate, 1);
+  viewIndex = -1;
+  saveToStorage();
+  updateDateDisplay();
+  renderCards(TASKS, false);
+  if(moved.length){
+    document.querySelectorAll('.task-card').forEach((el,i)=>{
+      if(moved.includes(i)) el.classList.add('flash');
+      setTimeout(()=>el.classList.remove('flash'), 900);
+    });
+  }
 }
 
 // ══════════════════════════════════════════════
 //  INIT
 // ══════════════════════════════════════════════
 initDates();
+const restored = loadFromStorage();
+if(restored) updateDateDisplay();
 renderCards(TASKS, false);
 </script>
 </body></html>
